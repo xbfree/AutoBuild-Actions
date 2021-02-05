@@ -19,14 +19,14 @@ GET_TARGET_INFO() {
 Diy_Part1_Base() {
 	Diy_Core
 	Mkdir package/lean
-	if [[ "${INCLUDE_Latest_Xray}" == "true" ]];then
-		Update_Makefile xray package/lean/xray
-		Update_Makefile v2ray package/lean/v2ray
-		Update_Makefile v2ray-plugin package/lean/v2ray-plugin
-	fi
 	if [[ "${INCLUDE_SSR_Plus}" == "true" ]];then
 		ExtraPackages git lean helloworld https://github.com/fw876 master
 		sed -i 's/143/143,25,5222/' package/lean/helloworld/luci-app-ssr-plus/root/etc/init.d/shadowsocksr
+	fi
+	if [[ "${INCLUDE_Keep_Latest_Xray}" == "true" ]];then
+		Update_Makefile xray-core package/lean/helloworld/xray-core
+		# Update_Makefile v2ray package/lean/v2ray
+		# Update_Makefile v2ray-plugin package/lean/v2ray-plugin
 	fi
 	if [[ "${INCLUDE_AutoBuild_Tools}" == "true" ]];then
 		Replace_File Scripts/AutoBuild_Tools.sh package/base-files/files/bin
@@ -43,7 +43,7 @@ Diy_Part2_Base() {
 	Diy_Core
 	GET_TARGET_INFO
 	if [[ "${INCLUDE_Enable_FirewallPort_53}" == "true" ]];then
-		sed -i "s?iptables?#iptables?g" ${Default_File} > /dev/null 2>&1
+		[ -f "${Default_File}" ] && sed -i "s?iptables?#iptables?g" ${Default_File} > /dev/null 2>&1
 	fi
 	if [[ "${INCLUDE_AutoUpdate}" == "true" ]];then
 		ExtraPackages git lean luci-app-autoupdate https://github.com/Hyy2001X main
@@ -57,6 +57,8 @@ Diy_Part2_Base() {
 	else
 		sed -i "s?Openwrt?Openwrt ${Openwrt_Version}?g" package/base-files/files/etc/banner
 	fi
+	Replace_File Customize/uhttpd.po package/feeds/luci/applications/luci-app-uhttpd/po/zh-cn
+	Replace_File Customize/webadmin.po package/lean/luci-app-webadmin/po/zh-cn
 	[[ -z "${Author}" ]] && Author="Unknown"
 	echo "Author: ${Author}"
 	echo "Openwrt Version: ${Openwrt_Version}"
@@ -160,26 +162,32 @@ Replace_File() {
 Update_Makefile() {
 	PKG_NAME="$1"
 	Makefile="$2/Makefile"
+	[ -f /tmp/tmp_file ] && rm -f /tmp/tmp_file
 	if [ -f "${Makefile}" ];then
 		PKG_URL_MAIN="$(grep "PKG_SOURCE_URL:=" ${Makefile} | cut -c17-100)"
 		_process1=${PKG_URL_MAIN##*com/}
 		_process2=${_process1%%/tar*}
 		api_URL="https://api.github.com/repos/${_process2}/releases"
-		PKG_DL_URL="https://codeload.github.com/${_process2}/tar.gz/v"
+		PKG_SOURCE_URL="$(grep "PKG_SOURCE_URL:=" ${Makefile} | cut -c17-100)"
+		PKG_DL_URL="${PKG_SOURCE_URL%\$(\PKG_VERSION*}"
 		Offical_Version="$(curl -s ${api_URL} 2>/dev/null | grep 'tag_name' | egrep -o '[0-9].+[0-9.]+' | awk 'NR==1')"
-		if [[ -z "${Offical_Version}" ]] && [[ ! "$?" -eq 0 ]];then
-			echo "Failed to obtain the Offical version,skip update ..."
+		if [[ -z "${Offical_Version}" ]];then
+			echo "Failed to obtain the Offical version of [${PKG_NAME}],skip update ..."
 			return
 		fi
 		Source_Version="$(grep "PKG_VERSION:=" ${Makefile} | cut -c14-20)"
 		Source_HASH="$(grep "PKG_HASH:=" ${Makefile} | cut -c11-100)"
+		if [[ -z "${Source_Version}" ]] || [[ -z "${Source_HASH}" ]];then
+			echo "Failed to obtain the Source version or HASH,skip update ..."
+			return
+		fi
 		echo -e "Current ${PKG_NAME} version: ${Source_Version}\nOffical ${PKG_NAME} version: ${Offical_Version}"
-		if [[ ! "${Source_Version}" == "${Offical_Version}" ]] && [[ ! "$?" -eq 0 ]];then
+		if [[ ! "${Source_Version}" == "${Offical_Version}" ]];then
 			echo -e "Updating package ${PKG_NAME} [${Source_Version}] to [${Offical_Version}] ..."
 			sed -i "s?PKG_VERSION:=${Source_Version}?PKG_VERSION:=${Offical_Version}?g" ${Makefile}
 			wget -q "${PKG_DL_URL}${Offical_Version}?" -O /tmp/tmp_file
 			if [[ "$?" -eq 0 ]];then
-				Offical_HASH=$(sha256sum /tmp/tmp_file | cut -d ' ' -f1)
+				Offical_HASH="$(sha256sum /tmp/tmp_file | cut -d ' ' -f1)"
 				sed -i "s?PKG_HASH:=${Source_HASH}?PKG_HASH:=${Offical_HASH}?g" ${Makefile}
 			else
 				echo "Failed to update the package [${PKG_NAME}],skip update ..."
@@ -188,5 +196,5 @@ Update_Makefile() {
 	else
 		echo "Package ${PKG_NAME} is not detected,skip update ..."
 	fi
-	unset _process1 _process2 Offical_Version
+	unset _process1 _process2 Offical_Version Source_Version
 }
